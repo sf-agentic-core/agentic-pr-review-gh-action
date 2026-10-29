@@ -1,6 +1,7 @@
 import { detectGitOverlap, type GitExecFn, type OverlapResult } from './overlap.js';
 import { validateEditSurfaces, type EditSurfacesResult } from './surfaces.js';
 import { runSecretScan, type CommandExecFn, type SecretScanResult } from './secrets.js';
+import { validateShellSyntax, type ShellValidationResult } from './shell.js';
 
 export interface PreflightOptions {
   baseRef: string;
@@ -9,6 +10,7 @@ export interface PreflightOptions {
   execCommand: CommandExecFn;
   checkOverlap?: boolean;
   checkSecrets?: boolean;
+  checkShellSyntax?: boolean;
   failOnScannerMissing?: boolean;
   protectedPatterns?: string[];
   allowedPatterns?: string[];
@@ -16,11 +18,12 @@ export interface PreflightOptions {
 
 export interface PreflightSummary {
   success: boolean;
-  failedStep?: 'git-overlap' | 'edit-surfaces' | 'secrets';
+  failedStep?: 'git-overlap' | 'edit-surfaces' | 'secrets' | 'shell-syntax';
   reasons: string[];
   overlapResult?: OverlapResult;
   surfacesResult: EditSurfacesResult;
   secretsResult?: SecretScanResult;
+  shellResult?: ShellValidationResult;
 }
 
 /**
@@ -120,15 +123,42 @@ export async function runPreflightInvariants(options: PreflightOptions): Promise
     }
   }
 
+  // Step 5: Shell Syntax Check (bash -n on workflow run: blocks and .sh files)
+  let shellResult: ShellValidationResult | undefined;
+  if (options.checkShellSyntax !== false) {
+    const fullDiff = await execGit(['diff', `${baseRef}...${headRef}`]);
+    shellResult = await validateShellSyntax({
+      diff: fullDiff,
+      execCommand,
+    });
+
+    if (!shellResult.isValid) {
+      for (const err of shellResult.syntaxErrors) {
+        reasons.push(`Shell syntax error in ${err.file}: ${err.error.trim()}`);
+      }
+      return {
+        success: false,
+        failedStep: 'shell-syntax',
+        reasons,
+        overlapResult,
+        surfacesResult,
+        secretsResult,
+        shellResult,
+      };
+    }
+  }
+
   return {
     success: true,
     reasons,
     overlapResult,
     surfacesResult,
     secretsResult,
+    shellResult,
   };
 }
 
 export * from './overlap.js';
 export * from './surfaces.js';
 export * from './secrets.js';
+export * from './shell.js';

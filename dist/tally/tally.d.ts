@@ -15,3 +15,4 @@ export interface QuorumDecision {
  * - REQUEST_CHANGES triggers if even a SINGLE seat raises 1 or more blocking findings.
  */
 export declare function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision;
+export declare function deduplicateFindings(findings: Finding[]): Finding[];
