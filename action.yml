@@ -17,7 +17,7 @@ inputs:
   model:
     description: 'Exact model identifier to use for the tribunal seats'
     required: false
-    default: 'claude-3-5-sonnet-latest'
+    default: 'claude-sonnet-4-6'
   max-corrections:
     description: 'Maximum number of automated correction loops before human intervention is required'
     required: false

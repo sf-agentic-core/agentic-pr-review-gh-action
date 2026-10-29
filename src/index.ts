@@ -22,7 +22,7 @@ export async function run(): Promise<void> {
     const maxCorrections = parseInt(core.getInput('max-corrections') || '3', 10);
     const provider = (core.getInput('provider') || 'anthropic') as LLMProvider;
     const apiKey = core.getInput('api-key');
-    const model = core.getInput('model') || 'claude-3-5-sonnet-latest';
+    const model = core.getInput('model') || 'claude-sonnet-4-6';
 
     const context = github.context;
     const prPayload = context.payload.pull_request;
