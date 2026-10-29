@@ -22,6 +22,14 @@ inputs:
     description: 'Maximum number of automated correction loops before human intervention is required'
     required: false
     default: '3'
+  auto-merge:
+    description: 'Automatically merge the PR if tribunal unanimously/majority approves and invariants are green'
+    required: false
+    default: 'false'
+  merge-method:
+    description: 'Merge method to use for auto-merge: squash, merge, or rebase'
+    required: false
+    default: 'squash'
   check-overlap:
     description: 'Whether to verify that main has not drifted on touched files since branch creation'
     required: false
@@ -38,6 +46,10 @@ outputs:
     description: 'Total number of blocking findings detected'
   overlap-detected:
     description: 'Whether a merge collision overlap was detected with origin/main'
+  budget-exhausted:
+    description: 'Whether the automated correction iteration budget was exhausted'
+  merged:
+    description: 'Whether the pull request was automatically merged by the gate'
 
 runs:
   using: 'node20'

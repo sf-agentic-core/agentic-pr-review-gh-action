@@ -6,6 +6,9 @@ import { runTribunal } from './tribunal/runner.js';
 import type { LLMProvider, PullRequestMetadata } from './tribunal/types.js';
 import { calculateQuorum } from './tally/tally.js';
 import { publishPullRequestReview } from './tally/publisher.js';
+import { countCorrectionRounds, checkBudgetStatus } from './budget/budget.js';
+import { escalateToHuman } from './budget/escalation.js';
+import { evaluateMergeGate } from './budget/gate.js';
 
 export async function run(): Promise<void> {
   try {
@@ -14,9 +17,16 @@ export async function run(): Promise<void> {
     const headRef = core.getInput('head-ref') || 'HEAD';
     const checkOverlap = core.getBooleanInput('check-overlap');
     const strictInvariants = core.getBooleanInput('strict-invariants');
+    const autoMergeRequested = core.getBooleanInput('auto-merge');
+    const mergeMethod = (core.getInput('merge-method') || 'squash') as 'squash' | 'merge' | 'rebase';
+    const maxCorrections = parseInt(core.getInput('max-corrections') || '3', 10);
     const provider = (core.getInput('provider') || 'anthropic') as LLMProvider;
     const apiKey = core.getInput('api-key');
     const model = core.getInput('model') || 'claude-3-5-sonnet-latest';
+
+    const context = github.context;
+    const prPayload = context.payload.pull_request;
+    const octokit = github.getOctokit(token);
 
     core.info('🔎 Phase 0: Running Invariant Pre-flight Checks...');
 
@@ -74,7 +84,50 @@ export async function run(): Promise<void> {
 
     core.info('✅ Invariant Pre-flight passed cleanly.');
 
-    // Phase 1: Review Tribunal Execution
+    // Phase 1: Budget and Iteration Guard
+    if (prPayload && prPayload.number && context.repo) {
+      core.info('⏱️ Phase 1: Checking Tamper-Evident Correction Budget...');
+      try {
+        const { data: reviews } = await octokit.rest.pulls.listReviews({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pull_number: prPayload.number,
+        });
+
+        const currentRounds = countCorrectionRounds(reviews);
+        const budget = checkBudgetStatus({
+          currentCorrections: currentRounds,
+          maxCorrections,
+        });
+
+        core.info(`- Correction rounds used: ${currentRounds}/${maxCorrections}`);
+
+        if (budget.isExhausted) {
+          core.warning(`⚠️ ${budget.reason}`);
+          core.setOutput('budget-exhausted', 'true');
+          core.setOutput('verdict', 'BLOCKED');
+
+          await escalateToHuman({
+            octokit,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pullNumber: prPayload.number,
+            roundsUsed: currentRounds,
+            maxRounds: maxCorrections,
+            lastBlockersCount: 1,
+          });
+
+          core.setFailed(budget.reason || 'Correction budget exhausted.');
+          return;
+        }
+
+        core.setOutput('budget-exhausted', 'false');
+      } catch (err: unknown) {
+        core.warning(`Could not inspect review history for budget check: ${String(err)}`);
+      }
+    }
+
+    // Phase 2: Review Tribunal Execution
     if (!apiKey) {
       core.warning('⚠️ No api-key provided. Skipping Synthetic Review Tribunal.');
       core.setOutput('verdict', 'APPROVED');
@@ -82,13 +135,10 @@ export async function run(): Promise<void> {
       return;
     }
 
-    core.info(`🏛️ Phase 1: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
+    core.info(`🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
 
     // Obtain diff
     const diff = await execGit(['diff', `${baseRef}...${headRef}`]);
-
-    const context = github.context;
-    const prPayload = context.payload.pull_request;
 
     const pr: PullRequestMetadata = {
       title: prPayload?.title || 'Local / Non-PR Invocation',
@@ -108,8 +158,8 @@ export async function run(): Promise<void> {
 
     core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);
 
-    // Phase 2: Asymmetric Quorum Tally & Review Publishing
-    core.info('📊 Phase 2: Computing Asymmetric Quorum Decision...');
+    // Phase 3: Asymmetric Quorum Tally & Review Publishing
+    core.info('📊 Phase 3: Computing Asymmetric Quorum Decision...');
     const decision = calculateQuorum(tribunal.seatResults);
 
     for (const seat of tribunal.seatResults) {
@@ -122,7 +172,6 @@ export async function run(): Promise<void> {
     // Publish review on GitHub PR if running in a pull request context
     if (prPayload && prPayload.number && context.repo) {
       core.info(`📝 Publishing review to PR #${prPayload.number}...`);
-      const octokit = github.getOctokit(token);
       const commitSha = prPayload.head?.sha || headRef;
 
       try {
@@ -140,6 +189,22 @@ export async function run(): Promise<void> {
         const errMsg = err instanceof Error ? err.message : String(err);
         core.warning(`Failed to publish GitHub PR review comment: ${errMsg}`);
       }
+
+      // Phase 4: Auto-merge Gate Evaluation
+      core.info('🚪 Phase 4: Evaluating Auto-merge Gate...');
+      const mergeResult = await evaluateMergeGate({
+        octokit,
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pullNumber: prPayload.number,
+        autoMergeRequested,
+        preflight,
+        decision,
+        mergeMethod,
+      });
+
+      core.setOutput('merged', mergeResult.merged ? 'true' : 'false');
+      core.info(`- Auto-merge result: ${mergeResult.reason}`);
     }
 
     if (decision.verdict === 'REQUEST_CHANGES') {
