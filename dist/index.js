@@ -29967,8 +29967,11 @@ const exec = __importStar(__nccwpck_require__(5236));
 const github = __importStar(__nccwpck_require__(3228));
 const index_js_1 = __nccwpck_require__(5749);
 const runner_js_1 = __nccwpck_require__(7461);
+const tally_js_1 = __nccwpck_require__(9772);
+const publisher_js_1 = __nccwpck_require__(3918);
 async function run() {
     try {
+        const token = core.getInput('github-token', { required: true });
         const baseRef = core.getInput('base-ref') || 'origin/main';
         const headRef = core.getInput('head-ref') || 'HEAD';
         const checkOverlap = core.getBooleanInput('check-overlap');
@@ -30053,16 +30056,40 @@ async function run() {
             model,
         });
         core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);
+        // Phase 2: Asymmetric Quorum Tally & Review Publishing
+        core.info('📊 Phase 2: Computing Asymmetric Quorum Decision...');
+        const decision = (0, tally_js_1.calculateQuorum)(tribunal.seatResults);
         for (const seat of tribunal.seatResults) {
             core.info(`- ${seat.seatName}: ${seat.vote} (${seat.findings.length} findings)`);
         }
-        core.setOutput('blockers-count', String(tribunal.allBlockers.length));
-        if (tribunal.hasBlockers) {
-            core.setOutput('verdict', 'CHANGES_REQUESTED');
-            core.setFailed(`Tribunal rejected PR: ${tribunal.allBlockers.length} blocking finding(s) detected.`);
+        core.setOutput('verdict', decision.verdict);
+        core.setOutput('blockers-count', String(decision.blockers.length));
+        // Publish review on GitHub PR if running in a pull request context
+        if (prPayload && prPayload.number && context.repo) {
+            core.info(`📝 Publishing review to PR #${prPayload.number}...`);
+            const octokit = github.getOctokit(token);
+            const commitSha = prPayload.head?.sha || headRef;
+            try {
+                const reviewId = await (0, publisher_js_1.publishPullRequestReview)({
+                    octokit,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pullNumber: prPayload.number,
+                    commitSha,
+                    decision,
+                    seatResults: tribunal.seatResults,
+                });
+                core.info(`✅ Review published successfully (ID: ${reviewId}).`);
+            }
+            catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                core.warning(`Failed to publish GitHub PR review comment: ${errMsg}`);
+            }
+        }
+        if (decision.verdict === 'REQUEST_CHANGES') {
+            core.setFailed(`Tribunal rejected PR: ${decision.blockers.length} blocking finding(s) detected.`);
         }
         else {
-            core.setOutput('verdict', 'APPROVED');
             core.info('🎉 Tribunal APPROVED pull request.');
         }
     }
@@ -30373,6 +30400,208 @@ function validateEditSurfaces(options) {
         violations,
         reason: isValid ? undefined : `Modifications detected on prohibited or unauthorized surfaces: ${violations.join(', ')}`,
     };
+}
+
+
+/***/ }),
+
+/***/ 1940:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatReviewBody = formatReviewBody;
+exports.mapFindingsToInlineComments = mapFindingsToInlineComments;
+exports.formatInlineComment = formatInlineComment;
+/**
+ * Formats the primary Markdown summary body for the GitHub PR review.
+ */
+function formatReviewBody(decision, seatResults) {
+    const verdictEmoji = decision.verdict === 'APPROVE' ? '✅' : '❌';
+    const rows = seatResults
+        .map((seat) => {
+        const voteEmoji = seat.vote === 'APPROVE' ? '✅' : '❌';
+        return `| ${seat.seatName} | ${voteEmoji} ${seat.vote} | ${escapeMarkdown(seat.summary)} |`;
+    })
+        .join('\n');
+    let body = `## 🏛️ Synthetic Review Tribunal Verdict: \`${decision.verdict}\`
+
+> ${decision.summary}
+
+### 🗳️ Tribunal Seat Votes
+
+| Seat | Vote | Summary |
+| --- | --- | --- |
+${rows}
+`;
+    if (decision.blockers.length > 0) {
+        body += `\n### 🚫 Blocking Findings (${decision.blockers.length})\n\n`;
+        for (const b of decision.blockers) {
+            const location = b.line ? `${b.file}:${b.line}` : b.file;
+            body += `- **${escapeMarkdown(b.title)}** (\`${location}\`)\n`;
+            body += `  > ${escapeMarkdown(b.explanation)}\n`;
+            if (b.suggestion) {
+                body += `  - **Suggestion:** ${escapeMarkdown(b.suggestion)}\n`;
+            }
+        }
+    }
+    if (decision.warnings.length > 0) {
+        body += `\n### ⚠️ Warnings & Suggestions (${decision.warnings.length + decision.suggestions.length})\n\n`;
+        for (const w of [...decision.warnings, ...decision.suggestions]) {
+            const location = w.line ? `${w.file}:${w.line}` : w.file;
+            body += `- [${w.severity}] **${escapeMarkdown(w.title)}** (\`${location}\`): ${escapeMarkdown(w.explanation)}\n`;
+        }
+    }
+    body += '\n---\n*Generated deterministically by [Agentic PR Review Tribunal](https://github.com/sf-agentic-core/agentic-pr-review-gh-action)*';
+    return body;
+}
+/**
+ * Maps tribunal findings that contain file and line coordinates into GitHub inline diff comments.
+ */
+function mapFindingsToInlineComments(findings) {
+    const inlineComments = [];
+    for (const f of findings) {
+        if (typeof f.line === 'number' && f.line > 0 && f.file !== 'unknown') {
+            inlineComments.push({
+                path: f.file,
+                line: f.line,
+                body: formatInlineComment(f),
+            });
+        }
+    }
+    return inlineComments;
+}
+function formatInlineComment(finding) {
+    const icon = finding.severity === 'BLOCKER' ? '🚨' : finding.severity === 'WARNING' ? '⚠️' : '💡';
+    let comment = `${icon} **[${finding.severity}] ${finding.title}**\n\n`;
+    comment += `${finding.explanation}\n`;
+    if (finding.suggestion) {
+        comment += `\n> **Suggested Fix:**\n> ${finding.suggestion}\n`;
+    }
+    return comment;
+}
+function escapeMarkdown(text) {
+    return text.replace(/\|/g, '\\|');
+}
+
+
+/***/ }),
+
+/***/ 3918:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.publishPullRequestReview = publishPullRequestReview;
+const formatter_js_1 = __nccwpck_require__(1940);
+/**
+ * Publishes the aggregated tribunal review verdict and inline findings
+ * to the specified GitHub Pull Request.
+ */
+async function publishPullRequestReview(options) {
+    const { octokit, owner, repo, pullNumber, commitSha, decision, seatResults } = options;
+    const body = (0, formatter_js_1.formatReviewBody)(decision, seatResults);
+    const allFindings = [...decision.blockers, ...decision.warnings, ...decision.suggestions];
+    const inlineComments = (0, formatter_js_1.mapFindingsToInlineComments)(allFindings);
+    const event = decision.verdict === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+    const response = await octokit.rest.pulls.createReview({
+        owner,
+        repo,
+        pull_number: pullNumber,
+        commit_id: commitSha,
+        body,
+        event,
+        comments: inlineComments.length > 0 ? inlineComments : undefined,
+    });
+    return response.data.id;
+}
+
+
+/***/ }),
+
+/***/ 9772:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.calculateQuorum = calculateQuorum;
+/**
+ * Calculates the final tribunal decision based on the Principle of Asymmetric Quorum:
+ * - APPROVE requires at least 2 approving seats AND 0 blocking findings.
+ * - REQUEST_CHANGES triggers if even a SINGLE seat raises 1 or more blocking findings.
+ */
+function calculateQuorum(seatResults) {
+    const totalSeats = seatResults.length;
+    let approveVotes = 0;
+    let requestChangesVotes = 0;
+    const rawBlockers = [];
+    const warnings = [];
+    const suggestions = [];
+    for (const seat of seatResults) {
+        if (seat.vote === 'APPROVE') {
+            approveVotes++;
+        }
+        else {
+            requestChangesVotes++;
+        }
+        for (const finding of seat.findings) {
+            if (finding.severity === 'BLOCKER') {
+                rawBlockers.push(finding);
+            }
+            else if (finding.severity === 'WARNING') {
+                warnings.push(finding);
+            }
+            else {
+                suggestions.push(finding);
+            }
+        }
+    }
+    // Deduplicate blockers by file + line + title
+    const blockers = deduplicateFindings(rawBlockers);
+    const hasBlockers = blockers.length > 0;
+    const isApproved = !hasBlockers && approveVotes >= Math.ceil(totalSeats / 2);
+    let summary = '';
+    if (isApproved) {
+        if (approveVotes === totalSeats) {
+            summary = `Unanimous approval (${approveVotes}-0) with zero blocking findings across all seats.`;
+        }
+        else {
+            summary = `Approved by majority (${approveVotes}/${totalSeats}) with zero blocking findings.`;
+        }
+    }
+    else {
+        if (hasBlockers) {
+            summary = `Asymmetric Quorum: ${requestChangesVotes} seat(s) raised blocking findings (${blockers.length} unique blocker(s)). Changes requested.`;
+        }
+        else {
+            summary = `Quorum not reached: only ${approveVotes}/${totalSeats} seats approved. Changes requested.`;
+        }
+    }
+    return {
+        verdict: isApproved ? 'APPROVE' : 'REQUEST_CHANGES',
+        approveVotes,
+        requestChangesVotes,
+        totalSeats,
+        blockers,
+        warnings,
+        suggestions,
+        summary,
+    };
+}
+function deduplicateFindings(findings) {
+    const seen = new Set();
+    const deduped = [];
+    for (const f of findings) {
+        const key = `${f.file}:${f.line ?? 'any'}:${f.title.toLowerCase().trim()}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            deduped.push(f);
+        }
+    }
+    return deduped;
 }
 
 
