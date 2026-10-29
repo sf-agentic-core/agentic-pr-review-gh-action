@@ -1,0 +1,17 @@
+# Gitleaks Configuration for Agentic PR Review Action
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for benign test fixtures and documentation"
+paths = [
+  '''src/tribunal/adapter\.test\.ts''',
+  '''src/budget/budget\.test\.ts''',
+  '''dist/.*''',
+]
+regexes = [
+  '''sk-ant-test-key''',
+  '''sk-openai-test-key''',
+  '''sk-deepseek-test-key''',
+  '''sha-abcdef-123456''',
+]

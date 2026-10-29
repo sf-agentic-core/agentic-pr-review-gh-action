@@ -1,0 +1,44 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Typecheck, Test & Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Test Suite
+        run: npm test
+
+      - name: Build Distribution
+        run: npm run build
+
+      - name: Check for Uncommitted Build Artifacts
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Build produced uncommitted changes or dist/ is out of date. Run 'npm run build' locally and commit the result."
+            git diff
+            exit 1
+          fi
