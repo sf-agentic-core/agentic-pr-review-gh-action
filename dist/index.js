@@ -30121,6 +30121,7 @@ const index_js_1 = __nccwpck_require__(5749);
 const runner_js_1 = __nccwpck_require__(7461);
 const tally_js_1 = __nccwpck_require__(9772);
 const publisher_js_1 = __nccwpck_require__(3918);
+const export_js_1 = __nccwpck_require__(9602);
 const budget_js_1 = __nccwpck_require__(580);
 const escalation_js_1 = __nccwpck_require__(4080);
 const gate_js_1 = __nccwpck_require__(6762);
@@ -30260,6 +30261,19 @@ async function run() {
         }
         core.setOutput('verdict', decision.verdict);
         core.setOutput('blockers-count', String(decision.blockers.length));
+        // Export local artifacts to disk (.tribunal/review.md & .tribunal/verdict.json)
+        const artifactDir = core.getInput('artifact-dir') || '.tribunal';
+        try {
+            const exported = await (0, export_js_1.exportTribunalArtifacts)({
+                outputDir: artifactDir,
+                decision,
+                seatResults: tribunal.seatResults,
+            });
+            core.info(`💾 Local tribunal artifacts written: ${exported.markdownPath} and ${exported.jsonPath}`);
+        }
+        catch (exportErr) {
+            core.warning(`Failed to export tribunal artifacts: ${String(exportErr)}`);
+        }
         // Publish review on GitHub PR if running in a pull request context
         if (prPayload && prPayload.number && context.repo) {
             core.info(`📝 Publishing review to PR #${prPayload.number}...`);
@@ -30293,6 +30307,7 @@ async function run() {
                 mergeMethod,
             });
             core.setOutput('merged', mergeResult.merged ? 'true' : 'false');
+            core.setOutput('ready-to-merge', mergeResult.authorized ? 'true' : 'false');
             core.info(`- Auto-merge result: ${mergeResult.reason}`);
         }
         if (decision.verdict === 'REQUEST_CHANGES') {
@@ -30608,6 +30623,93 @@ function validateEditSurfaces(options) {
         isValid,
         violations,
         reason: isValid ? undefined : `Modifications detected on prohibited or unauthorized surfaces: ${violations.join(', ')}`,
+    };
+}
+
+
+/***/ }),
+
+/***/ 9602:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.exportTribunalArtifacts = exportTribunalArtifacts;
+const fs = __importStar(__nccwpck_require__(3024));
+const path = __importStar(__nccwpck_require__(6760));
+const formatter_js_1 = __nccwpck_require__(1940);
+/**
+ * Persists the tribunal verdict and review report to local disk files:
+ * - `.tribunal/review.md`: Complete human and agent-readable Markdown report
+ * - `.tribunal/verdict.json`: Machine-readable structured decision payload
+ */
+async function exportTribunalArtifacts(options) {
+    const { outputDir = '.tribunal', decision, seatResults } = options;
+    if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+    }
+    const markdownPath = path.join(outputDir, 'review.md');
+    const jsonPath = path.join(outputDir, 'verdict.json');
+    // 1. Generate and write Markdown review
+    const markdownContent = (0, formatter_js_1.formatReviewBody)(decision, seatResults);
+    fs.writeFileSync(markdownPath, markdownContent, 'utf-8');
+    // 2. Generate and write structured JSON verdict
+    const jsonPayload = {
+        verdict: decision.verdict,
+        approveVotes: decision.approveVotes,
+        requestChangesVotes: decision.requestChangesVotes,
+        totalSeats: decision.totalSeats,
+        summary: decision.summary,
+        blockers: decision.blockers,
+        warnings: decision.warnings,
+        suggestions: decision.suggestions,
+        seatResults: seatResults.map((s) => ({
+            seatId: s.seatId,
+            seatName: s.seatName,
+            vote: s.vote,
+            summary: s.summary,
+            findingsCount: s.findings.length,
+        })),
+        timestamp: new Date().toISOString(),
+    };
+    fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload, null, 2), 'utf-8');
+    return {
+        markdownPath,
+        jsonPath,
     };
 }
 
@@ -31222,6 +31324,22 @@ module.exports = require("node:crypto");
 
 "use strict";
 module.exports = require("node:events");
+
+/***/ }),
+
+/***/ 3024:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs");
+
+/***/ }),
+
+/***/ 6760:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:path");
 
 /***/ }),
 

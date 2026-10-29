@@ -6,6 +6,7 @@ import { runTribunal } from './tribunal/runner.js';
 import type { LLMProvider, PullRequestMetadata } from './tribunal/types.js';
 import { calculateQuorum } from './tally/tally.js';
 import { publishPullRequestReview } from './tally/publisher.js';
+import { exportTribunalArtifacts } from './tally/export.js';
 import { countCorrectionRounds, checkBudgetStatus } from './budget/budget.js';
 import { escalateToHuman } from './budget/escalation.js';
 import { evaluateMergeGate } from './budget/gate.js';
@@ -169,6 +170,19 @@ export async function run(): Promise<void> {
     core.setOutput('verdict', decision.verdict);
     core.setOutput('blockers-count', String(decision.blockers.length));
 
+    // Export local artifacts to disk (.tribunal/review.md & .tribunal/verdict.json)
+    const artifactDir = core.getInput('artifact-dir') || '.tribunal';
+    try {
+      const exported = await exportTribunalArtifacts({
+        outputDir: artifactDir,
+        decision,
+        seatResults: tribunal.seatResults,
+      });
+      core.info(`💾 Local tribunal artifacts written: ${exported.markdownPath} and ${exported.jsonPath}`);
+    } catch (exportErr) {
+      core.warning(`Failed to export tribunal artifacts: ${String(exportErr)}`);
+    }
+
     // Publish review on GitHub PR if running in a pull request context
     if (prPayload && prPayload.number && context.repo) {
       core.info(`📝 Publishing review to PR #${prPayload.number}...`);
@@ -204,6 +218,7 @@ export async function run(): Promise<void> {
       });
 
       core.setOutput('merged', mergeResult.merged ? 'true' : 'false');
+      core.setOutput('ready-to-merge', mergeResult.authorized ? 'true' : 'false');
       core.info(`- Auto-merge result: ${mergeResult.reason}`);
     }
 
