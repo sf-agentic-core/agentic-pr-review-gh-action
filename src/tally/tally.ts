@@ -22,8 +22,8 @@ export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision
   let requestChangesVotes = 0;
 
   const rawBlockers: Finding[] = [];
-  const warnings: Finding[] = [];
-  const suggestions: Finding[] = [];
+  const rawWarnings: Finding[] = [];
+  const rawSuggestions: Finding[] = [];
 
   for (const seat of seatResults) {
     if (seat.vote === 'APPROVE') {
@@ -36,15 +36,17 @@ export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision
       if (finding.severity === 'BLOCKER') {
         rawBlockers.push(finding);
       } else if (finding.severity === 'WARNING') {
-        warnings.push(finding);
+        rawWarnings.push(finding);
       } else {
-        suggestions.push(finding);
+        rawSuggestions.push(finding);
       }
     }
   }
 
-  // Deduplicate blockers by file + line + title
+  // Deduplicate blockers, warnings, and suggestions by file + line proximity + semantic overlap
   const blockers = deduplicateFindings(rawBlockers);
+  const warnings = deduplicateFindings(rawWarnings);
+  const suggestions = deduplicateFindings(rawSuggestions);
 
   const hasBlockers = blockers.length > 0;
   const isApproved = !hasBlockers && approveVotes >= Math.ceil(totalSeats / 2);
@@ -76,15 +78,43 @@ export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision
   };
 }
 
-function deduplicateFindings(findings: Finding[]): Finding[] {
-  const seen = new Set<string>();
+export function deduplicateFindings(findings: Finding[]): Finding[] {
   const deduped: Finding[] = [];
 
-  for (const f of findings) {
-    const key = `${f.file}:${f.line ?? 'any'}:${f.title.toLowerCase().trim()}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      deduped.push(f);
+  for (const candidate of findings) {
+    const isDuplicate = deduped.some((existing) => {
+      // 1. Same file required
+      if (existing.file !== candidate.file) return false;
+
+      // 2. Exact match on title and line
+      if (
+        existing.line === candidate.line &&
+        existing.title.toLowerCase().trim() === candidate.title.toLowerCase().trim()
+      ) {
+        return true;
+      }
+
+      // 3. Proximity match: both have lines, lines within 5 of each other, and similar category or keywords
+      if (
+        typeof existing.line === 'number' &&
+        typeof candidate.line === 'number' &&
+        Math.abs(existing.line - candidate.line) <= 5
+      ) {
+        // If category matches, or if either title shares significant words
+        const wordsA = new Set(existing.title.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+        const wordsB = candidate.title.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+        const sharedWords = wordsB.filter((w) => wordsA.has(w));
+
+        if (existing.category === candidate.category || sharedWords.length > 0) {
+          return true;
+        }
+      }
+
+      return false;
+    });
+
+    if (!isDuplicate) {
+      deduped.push(candidate);
     }
   }
 

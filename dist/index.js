@@ -30357,6 +30357,7 @@ exports.runPreflightInvariants = runPreflightInvariants;
 const overlap_js_1 = __nccwpck_require__(9962);
 const surfaces_js_1 = __nccwpck_require__(3089);
 const secrets_js_1 = __nccwpck_require__(8988);
+const shell_js_1 = __nccwpck_require__(6883);
 /**
  * Executes the complete pre-flight invariants pipeline:
  * 1. Collects changed files on branch.
@@ -30433,17 +30434,42 @@ async function runPreflightInvariants(options) {
             };
         }
     }
+    // Step 5: Shell Syntax Check (bash -n on workflow run: blocks and .sh files)
+    let shellResult;
+    if (options.checkShellSyntax !== false) {
+        const fullDiff = await execGit(['diff', `${baseRef}...${headRef}`]);
+        shellResult = await (0, shell_js_1.validateShellSyntax)({
+            diff: fullDiff,
+            execCommand,
+        });
+        if (!shellResult.isValid) {
+            for (const err of shellResult.syntaxErrors) {
+                reasons.push(`Shell syntax error in ${err.file}: ${err.error.trim()}`);
+            }
+            return {
+                success: false,
+                failedStep: 'shell-syntax',
+                reasons,
+                overlapResult,
+                surfacesResult,
+                secretsResult,
+                shellResult,
+            };
+        }
+    }
     return {
         success: true,
         reasons,
         overlapResult,
         surfacesResult,
         secretsResult,
+        shellResult,
     };
 }
 __exportStar(__nccwpck_require__(9962), exports);
 __exportStar(__nccwpck_require__(3089), exports);
 __exportStar(__nccwpck_require__(8988), exports);
+__exportStar(__nccwpck_require__(6883), exports);
 
 
 /***/ }),
@@ -30560,6 +30586,152 @@ async function runSecretScan(options) {
             reason: `Gitleaks scanner not available or failed execution: ${errorMsg}`,
         };
     }
+}
+
+
+/***/ }),
+
+/***/ 6883:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractShellBlocksFromDiff = extractShellBlocksFromDiff;
+exports.validateShellSyntax = validateShellSyntax;
+/**
+ * Extracts shell scripts from diff:
+ * 1. From files ending in `.sh` or `.bash`
+ * 2. From `run: |` or `run: >` multi-line/single-line blocks in `.github/workflows/*.ya?ml`
+ */
+function extractShellBlocksFromDiff(diff) {
+    const blocks = [];
+    const fileDiffs = diff.split(/^diff --git /m);
+    for (const fileDiff of fileDiffs) {
+        if (!fileDiff.trim())
+            continue;
+        const fileMatch = fileDiff.match(/^[ab]\/(\S+)\s+[ab]\/(\S+)/m);
+        if (!fileMatch)
+            continue;
+        const filePath = fileMatch[2];
+        const isShellFile = filePath.endsWith('.sh') || filePath.endsWith('.bash');
+        const isWorkflowFile = /\.github\/workflows\/.*\.ya?ml$/.test(filePath);
+        if (!isShellFile && !isWorkflowFile)
+            continue;
+        // Collect added lines from diff (+ lines, excluding header +++)
+        const lines = fileDiff.split('\n');
+        const addedLines = [];
+        for (const line of lines) {
+            if (line.startsWith('+++'))
+                continue;
+            if (line.startsWith('+')) {
+                addedLines.push(line.slice(1));
+            }
+        }
+        if (addedLines.length === 0)
+            continue;
+        if (isShellFile) {
+            blocks.push({
+                file: filePath,
+                script: addedLines.join('\n'),
+            });
+        }
+        else if (isWorkflowFile) {
+            // Extract run: blocks from added workflow lines
+            let currentRunBlock = null;
+            let runBlockIndent = -1;
+            for (let i = 0; i < addedLines.length; i++) {
+                const line = addedLines[i];
+                const runMatch = line.match(/^(\s*)run:\s*([|>]?)\s*(.*)$/);
+                if (runMatch) {
+                    if (currentRunBlock && currentRunBlock.length > 0) {
+                        blocks.push({
+                            file: filePath,
+                            script: currentRunBlock.join('\n'),
+                        });
+                    }
+                    const indent = runMatch[1].length;
+                    const inlineScript = runMatch[3].trim();
+                    if (inlineScript && !runMatch[2]) {
+                        // Single-line run: script
+                        blocks.push({
+                            file: filePath,
+                            script: inlineScript,
+                        });
+                        currentRunBlock = null;
+                        runBlockIndent = -1;
+                    }
+                    else {
+                        // Multi-line block
+                        currentRunBlock = [];
+                        runBlockIndent = indent;
+                    }
+                    continue;
+                }
+                if (currentRunBlock !== null) {
+                    const lineIndent = line.search(/\S/);
+                    if (lineIndent > runBlockIndent || line.trim() === '') {
+                        currentRunBlock.push(line);
+                    }
+                    else {
+                        // End of run: block
+                        if (currentRunBlock.length > 0) {
+                            blocks.push({
+                                file: filePath,
+                                script: currentRunBlock.join('\n'),
+                            });
+                        }
+                        currentRunBlock = null;
+                        runBlockIndent = -1;
+                    }
+                }
+            }
+            if (currentRunBlock && currentRunBlock.length > 0) {
+                blocks.push({
+                    file: filePath,
+                    script: currentRunBlock.join('\n'),
+                });
+            }
+        }
+    }
+    return blocks;
+}
+/**
+ * Validates shell syntax deterministically using `bash -n` (no execution).
+ * Sanitizes GitHub Actions expressions ${{ ... }} with safe shell placeholders before checking.
+ */
+async function validateShellSyntax(options) {
+    const { diff, execCommand } = options;
+    const blocks = extractShellBlocksFromDiff(diff);
+    const syntaxErrors = [];
+    for (const block of blocks) {
+        // Sanitize GitHub Actions expressions: ${{ ... }} -> "__GHA_EXPR__"
+        const sanitizedScript = block.script.replace(/\$\{\{[^}]+\}\}/g, '"__GHA_EXPR__"');
+        // Run bash -n via bash -c 'bash -n << "EOF"\n...\nEOF'
+        try {
+            const res = await execCommand('bash', ['-n', '-c', sanitizedScript]);
+            if (res.exitCode !== 0) {
+                syntaxErrors.push({
+                    file: block.file,
+                    error: res.stderr || res.stdout || 'Unknown shell syntax error',
+                    snippet: block.script.slice(0, 200),
+                });
+            }
+        }
+        catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            syntaxErrors.push({
+                file: block.file,
+                error: `Failed to execute syntax check: ${errorMsg}`,
+                snippet: block.script.slice(0, 200),
+            });
+        }
+    }
+    return {
+        isValid: syntaxErrors.length === 0,
+        syntaxErrors,
+        blocksChecked: blocks.length,
+    };
 }
 
 
@@ -30839,6 +31011,7 @@ async function publishPullRequestReview(options) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.calculateQuorum = calculateQuorum;
+exports.deduplicateFindings = deduplicateFindings;
 /**
  * Calculates the final tribunal decision based on the Principle of Asymmetric Quorum:
  * - APPROVE requires at least 2 approving seats AND 0 blocking findings.
@@ -30849,8 +31022,8 @@ function calculateQuorum(seatResults) {
     let approveVotes = 0;
     let requestChangesVotes = 0;
     const rawBlockers = [];
-    const warnings = [];
-    const suggestions = [];
+    const rawWarnings = [];
+    const rawSuggestions = [];
     for (const seat of seatResults) {
         if (seat.vote === 'APPROVE') {
             approveVotes++;
@@ -30863,15 +31036,17 @@ function calculateQuorum(seatResults) {
                 rawBlockers.push(finding);
             }
             else if (finding.severity === 'WARNING') {
-                warnings.push(finding);
+                rawWarnings.push(finding);
             }
             else {
-                suggestions.push(finding);
+                rawSuggestions.push(finding);
             }
         }
     }
-    // Deduplicate blockers by file + line + title
+    // Deduplicate blockers, warnings, and suggestions by file + line proximity + semantic overlap
     const blockers = deduplicateFindings(rawBlockers);
+    const warnings = deduplicateFindings(rawWarnings);
+    const suggestions = deduplicateFindings(rawSuggestions);
     const hasBlockers = blockers.length > 0;
     const isApproved = !hasBlockers && approveVotes >= Math.ceil(totalSeats / 2);
     let summary = '';
@@ -30903,13 +31078,33 @@ function calculateQuorum(seatResults) {
     };
 }
 function deduplicateFindings(findings) {
-    const seen = new Set();
     const deduped = [];
-    for (const f of findings) {
-        const key = `${f.file}:${f.line ?? 'any'}:${f.title.toLowerCase().trim()}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            deduped.push(f);
+    for (const candidate of findings) {
+        const isDuplicate = deduped.some((existing) => {
+            // 1. Same file required
+            if (existing.file !== candidate.file)
+                return false;
+            // 2. Exact match on title and line
+            if (existing.line === candidate.line &&
+                existing.title.toLowerCase().trim() === candidate.title.toLowerCase().trim()) {
+                return true;
+            }
+            // 3. Proximity match: both have lines, lines within 5 of each other, and similar category or keywords
+            if (typeof existing.line === 'number' &&
+                typeof candidate.line === 'number' &&
+                Math.abs(existing.line - candidate.line) <= 5) {
+                // If category matches, or if either title shares significant words
+                const wordsA = new Set(existing.title.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+                const wordsB = candidate.title.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
+                const sharedWords = wordsB.filter((w) => wordsA.has(w));
+                if (existing.category === candidate.category || sharedWords.length > 0) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (!isDuplicate) {
+            deduped.push(candidate);
         }
     }
     return deduped;
@@ -31023,6 +31218,12 @@ const SEAT_DEFINITIONS = {
 - Identify state corruption, mutation leaks, or unhandled null/undefined values.
 - Verify backward compatibility and non-breaking contract changes.
 - Ensure error paths do not swallow exceptions silently.
+
+CRITICAL ACCURACY & ANTI-HALLUCINATION DIRECTIVES:
+- Do NOT assume external or standard library conventions for custom functions, helper scripts, or test harnesses.
+- When inspecting function call arguments (e.g. assert, check, run_case), you MUST trace the exact declaration and parameter signature within the repository/diff. If the caller arguments align with the function's own declared parameter order, it is NOT an error. Never claim arguments are transposed based on standard library expectations (such as JUnit or Node assert).
+- Distinguish strictly between a pure Syntax Error (which is caught by deterministic linters/compilers) and an observable Runtime or Logic defect.
+- Only flag a finding as BLOCKER if you can demonstrate an observable defect, crash, state corruption, or silent failure. If in doubt, downgrade to WARNING.
 `,
     },
     'seat-b': {
@@ -31176,11 +31377,30 @@ function parseSeatOutput(seatId, rawResponse) {
             : [];
         const hasBlockers = findings.some((f) => f.severity === 'BLOCKER');
         const vote = hasBlockers ? 'REQUEST_CHANGES' : parsed.vote === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
+        // Synthesize an informative summary if parsed.summary is missing, empty, or generic default
+        let summary = String(parsed.summary || '').trim();
+        const isGenericDefault = !summary || summary === 'Tribunal evaluation completed.' || summary.length < 10;
+        if (isGenericDefault) {
+            if (hasBlockers) {
+                const blockerTitles = findings
+                    .filter((f) => f.severity === 'BLOCKER')
+                    .map((f) => `'${f.title}'`)
+                    .slice(0, 2)
+                    .join(', ');
+                summary = `${def.seatName} requested changes due to blockers: ${blockerTitles}.`;
+            }
+            else if (findings.length > 0) {
+                summary = `${def.seatName} approved with ${findings.length} non-blocking suggestions.`;
+            }
+            else {
+                summary = `${def.seatName} approved cleanly with zero findings.`;
+            }
+        }
         return {
             seatId,
             seatName: def.seatName,
             vote,
-            summary: String(parsed.summary || 'Tribunal evaluation completed.'),
+            summary,
             findings,
             rawResponse,
         };

@@ -16,6 +16,12 @@ const SEAT_DEFINITIONS: Record<SeatId, PromptDefinition> = {
 - Identify state corruption, mutation leaks, or unhandled null/undefined values.
 - Verify backward compatibility and non-breaking contract changes.
 - Ensure error paths do not swallow exceptions silently.
+
+CRITICAL ACCURACY & ANTI-HALLUCINATION DIRECTIVES:
+- Do NOT assume external or standard library conventions for custom functions, helper scripts, or test harnesses.
+- When inspecting function call arguments (e.g. assert, check, run_case), you MUST trace the exact declaration and parameter signature within the repository/diff. If the caller arguments align with the function's own declared parameter order, it is NOT an error. Never claim arguments are transposed based on standard library expectations (such as JUnit or Node assert).
+- Distinguish strictly between a pure Syntax Error (which is caught by deterministic linters/compilers) and an observable Runtime or Logic defect.
+- Only flag a finding as BLOCKER if you can demonstrate an observable defect, crash, state corruption, or silent failure. If in doubt, downgrade to WARNING.
 `,
   },
   'seat-b': {
@@ -184,11 +190,29 @@ export function parseSeatOutput(seatId: SeatId, rawResponse: string): SeatReview
     const hasBlockers = findings.some((f) => f.severity === 'BLOCKER');
     const vote = hasBlockers ? 'REQUEST_CHANGES' : parsed.vote === 'APPROVE' ? 'APPROVE' : 'REQUEST_CHANGES';
 
+    // Synthesize an informative summary if parsed.summary is missing, empty, or generic default
+    let summary = String(parsed.summary || '').trim();
+    const isGenericDefault = !summary || summary === 'Tribunal evaluation completed.' || summary.length < 10;
+    if (isGenericDefault) {
+      if (hasBlockers) {
+        const blockerTitles = findings
+          .filter((f) => f.severity === 'BLOCKER')
+          .map((f) => `'${f.title}'`)
+          .slice(0, 2)
+          .join(', ');
+        summary = `${def.seatName} requested changes due to blockers: ${blockerTitles}.`;
+      } else if (findings.length > 0) {
+        summary = `${def.seatName} approved with ${findings.length} non-blocking suggestions.`;
+      } else {
+        summary = `${def.seatName} approved cleanly with zero findings.`;
+      }
+    }
+
     return {
       seatId,
       seatName: def.seatName,
       vote,
-      summary: String(parsed.summary || 'Tribunal evaluation completed.'),
+      summary,
       findings,
       rawResponse,
     };

@@ -1,6 +1,7 @@
 import { type GitExecFn, type OverlapResult } from './overlap.js';
 import { type EditSurfacesResult } from './surfaces.js';
 import { type CommandExecFn, type SecretScanResult } from './secrets.js';
+import { type ShellValidationResult } from './shell.js';
 export interface PreflightOptions {
     baseRef: string;
     headRef: string;
@@ -8,17 +9,19 @@ export interface PreflightOptions {
     execCommand: CommandExecFn;
     checkOverlap?: boolean;
     checkSecrets?: boolean;
+    checkShellSyntax?: boolean;
     failOnScannerMissing?: boolean;
     protectedPatterns?: string[];
     allowedPatterns?: string[];
 }
 export interface PreflightSummary {
     success: boolean;
-    failedStep?: 'git-overlap' | 'edit-surfaces' | 'secrets';
+    failedStep?: 'git-overlap' | 'edit-surfaces' | 'secrets' | 'shell-syntax';
     reasons: string[];
     overlapResult?: OverlapResult;
     surfacesResult: EditSurfacesResult;
     secretsResult?: SecretScanResult;
+    shellResult?: ShellValidationResult;
 }
 /**
  * Executes the complete pre-flight invariants pipeline:
@@ -31,3 +34,4 @@ export declare function runPreflightInvariants(options: PreflightOptions): Promi
 export * from './overlap.js';
 export * from './surfaces.js';
 export * from './secrets.js';
+export * from './shell.js';
