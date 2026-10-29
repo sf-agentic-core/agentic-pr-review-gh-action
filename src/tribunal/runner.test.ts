@@ -103,4 +103,60 @@ describe('runTribunal', () => {
       'REQUEST_CHANGES'
     );
   });
+
+  it('runs heterogeneous seats with different providers and models per seat', async () => {
+    const mockLLM: LLMClientFn = vi.fn(async (opts) => {
+      return {
+        content: `\`\`\`json
+{
+  "vote": "APPROVE",
+  "summary": "Reviewed by ${opts.provider} / ${opts.model}",
+  "findings": []
+}
+\`\`\``,
+        tokensUsed: 150,
+      };
+    });
+
+    const options: TribunalOptions = {
+      pr: samplePR,
+      seatConfigs: {
+        'seat-a': {
+          provider: 'google',
+          apiKey: 'gemini-key',
+          model: 'gemini-2.5-flash',
+        },
+        'seat-b': {
+          provider: 'deepseek',
+          apiKey: 'deepseek-key',
+          model: 'deepseek-reasoner',
+        },
+        'seat-c': {
+          provider: 'anthropic',
+          apiKey: 'claude-key',
+          model: 'claude-haiku-4-5',
+        },
+      },
+      llmClient: mockLLM,
+    };
+
+    const result = await runTribunal(options);
+
+    expect(mockLLM).toHaveBeenCalledTimes(3);
+
+    const calls = (mockLLM as any).mock.calls;
+    const providers = calls.map((c: any) => c[0].provider);
+    const models = calls.map((c: any) => c[0].model);
+
+    expect(providers).toContain('google');
+    expect(providers).toContain('deepseek');
+    expect(providers).toContain('anthropic');
+
+    expect(models).toContain('gemini-2.5-flash');
+    expect(models).toContain('deepseek-reasoner');
+    expect(models).toContain('claude-haiku-4-5');
+
+    expect(result.seatResults).toHaveLength(3);
+    expect(result.hasBlockers).toBe(false);
+  });
 });

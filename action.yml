@@ -8,16 +8,49 @@ inputs:
     required: true
     default: ${{ github.token }}
   provider:
-    description: 'AI model provider: anthropic, deepseek, or openai'
+    description: 'Default AI model provider: anthropic, openai, deepseek, or google'
     required: false
     default: 'anthropic'
   api-key:
-    description: 'API key for the chosen AI model provider'
-    required: true
+    description: 'Default API key for the chosen AI model provider'
+    required: false
   model:
-    description: 'Exact model identifier to use for the tribunal seats'
+    description: 'Default model identifier to use for the tribunal seats'
     required: false
     default: 'claude-sonnet-4-6'
+
+  # Seat A (Logic & Correctness) specialized configuration
+  seat-a-provider:
+    description: 'Provider for Seat A (Logic & Contracts): google, openai, deepseek, or anthropic'
+    required: false
+  seat-a-model:
+    description: 'Model for Seat A (e.g. gemini-2.5-flash, o1, claude-opus-4-6)'
+    required: false
+  seat-a-api-key:
+    description: 'API key for Seat A'
+    required: false
+
+  # Seat B (Test Quality & Boundaries) specialized configuration
+  seat-b-provider:
+    description: 'Provider for Seat B (Test Boundaries): deepseek, openai, anthropic, or google'
+    required: false
+  seat-b-model:
+    description: 'Model for Seat B (e.g. deepseek-reasoner, o3-mini, claude-sonnet-4-6)'
+    required: false
+  seat-b-api-key:
+    description: 'API key for Seat B'
+    required: false
+
+  # Seat C (Cognitive Load & Radical Simplification) specialized configuration
+  seat-c-provider:
+    description: 'Provider for Seat C (KISS): anthropic, openai, deepseek, or google'
+    required: false
+  seat-c-model:
+    description: 'Model for Seat C (e.g. claude-haiku-4-5, gpt-4o-mini)'
+    required: false
+  seat-c-api-key:
+    description: 'API key for Seat C'
+    required: false
   max-corrections:
     description: 'Maximum number of automated correction loops before human intervention is required'
     required: false

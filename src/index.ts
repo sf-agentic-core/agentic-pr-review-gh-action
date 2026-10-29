@@ -3,7 +3,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import { runPreflightInvariants, type GitExecFn, type CommandExecFn } from './invariants/index.js';
 import { runTribunal } from './tribunal/runner.js';
-import type { LLMProvider, PullRequestMetadata } from './tribunal/types.js';
+import type { LLMProvider, PullRequestMetadata, SeatExecutionConfig, SeatId } from './tribunal/types.js';
 import { calculateQuorum } from './tally/tally.js';
 import { publishPullRequestReview } from './tally/publisher.js';
 import { exportTribunalArtifacts } from './tally/export.js';
@@ -129,14 +129,48 @@ export async function run(): Promise<void> {
     }
 
     // Phase 2: Review Tribunal Execution
-    if (!apiKey) {
-      core.warning('⚠️ No api-key provided. Skipping Synthetic Review Tribunal.');
+    const seatConfigs: Partial<Record<SeatId, SeatExecutionConfig>> = {};
+
+    const resolveSeatConfig = (
+      seatId: SeatId,
+      prefix: 'seat-a' | 'seat-b' | 'seat-c'
+    ): SeatExecutionConfig | undefined => {
+      const sProvider = (core.getInput(`${prefix}-provider`) || provider) as LLMProvider;
+      const sKey = core.getInput(`${prefix}-api-key`) || apiKey;
+      const sModel = core.getInput(`${prefix}-model`) || model;
+
+      if (sKey && sModel && sProvider) {
+        return {
+          provider: sProvider,
+          apiKey: sKey,
+          model: sModel,
+        };
+      }
+      return undefined;
+    };
+
+    const configA = resolveSeatConfig('seat-a', 'seat-a');
+    const configB = resolveSeatConfig('seat-b', 'seat-b');
+    const configC = resolveSeatConfig('seat-c', 'seat-c');
+
+    if (configA) seatConfigs['seat-a'] = configA;
+    if (configB) seatConfigs['seat-b'] = configB;
+    if (configC) seatConfigs['seat-c'] = configC;
+
+    const hasAnyConfig = Boolean(
+      apiKey || configA?.apiKey || configB?.apiKey || configC?.apiKey
+    );
+
+    if (!hasAnyConfig) {
+      core.warning('⚠️ No api-key or per-seat API keys provided. Skipping Synthetic Review Tribunal.');
       core.setOutput('verdict', 'APPROVED');
       core.setOutput('blockers-count', '0');
       return;
     }
 
-    core.info(`🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
+    core.info(
+      `🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (Seat A: ${configA?.provider || provider}/${configA?.model || model}, Seat B: ${configB?.provider || provider}/${configB?.model || model}, Seat C: ${configC?.provider || provider}/${configC?.model || model})...`
+    );
 
     // Obtain diff
     const diff = await execGit(['diff', `${baseRef}...${headRef}`]);
@@ -155,6 +189,7 @@ export async function run(): Promise<void> {
       provider,
       apiKey,
       model,
+      seatConfigs,
     });
 
     core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);

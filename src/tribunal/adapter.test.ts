@@ -107,6 +107,48 @@ describe('callLLM', () => {
     expect(res.tokensUsed).toBe(180);
   });
 
+  it('calls Google Gemini Generative Language API with correct payload and headers', async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: '```json\n{"vote":"APPROVE","summary":"Gemini pass","findings":[]}\n```' }],
+            },
+          },
+        ],
+        usageMetadata: {
+          totalTokenCount: 220,
+        },
+      }),
+    })) as unknown as typeof fetch;
+
+    const res = await callLLM(
+      {
+        provider: 'google',
+        apiKey: 'gemini-test-key',
+        model: 'gemini-2.5-flash',
+        systemPrompt: 'You are Seat A',
+        userPrompt: 'Review this diff',
+      },
+      mockFetch
+    );
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = (mockFetch as any).mock.calls[0];
+    expect(url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+    expect(init.headers['x-goog-api-key']).toBe('gemini-test-key');
+    expect(init.headers['content-type']).toBe('application/json');
+
+    const body = JSON.parse(init.body);
+    expect(body.systemInstruction.parts[0].text).toBe('You are Seat A');
+    expect(body.contents[0].parts[0].text).toBe('Review this diff');
+
+    expect(res.content).toContain('{"vote":"APPROVE"');
+    expect(res.tokensUsed).toBe(220);
+  });
+
   it('throws an error if API responds with non-200 status', async () => {
     const mockFetch = vi.fn(async () => ({
       ok: false,
