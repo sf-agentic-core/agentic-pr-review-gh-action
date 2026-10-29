@@ -4,9 +4,12 @@ import * as github from '@actions/github';
 import { runPreflightInvariants, type GitExecFn, type CommandExecFn } from './invariants/index.js';
 import { runTribunal } from './tribunal/runner.js';
 import type { LLMProvider, PullRequestMetadata } from './tribunal/types.js';
+import { calculateQuorum } from './tally/tally.js';
+import { publishPullRequestReview } from './tally/publisher.js';
 
 export async function run(): Promise<void> {
   try {
+    const token = core.getInput('github-token', { required: true });
     const baseRef = core.getInput('base-ref') || 'origin/main';
     const headRef = core.getInput('head-ref') || 'HEAD';
     const checkOverlap = core.getBooleanInput('check-overlap');
@@ -104,17 +107,44 @@ export async function run(): Promise<void> {
     });
 
     core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);
+
+    // Phase 2: Asymmetric Quorum Tally & Review Publishing
+    core.info('📊 Phase 2: Computing Asymmetric Quorum Decision...');
+    const decision = calculateQuorum(tribunal.seatResults);
+
     for (const seat of tribunal.seatResults) {
       core.info(`- ${seat.seatName}: ${seat.vote} (${seat.findings.length} findings)`);
     }
 
-    core.setOutput('blockers-count', String(tribunal.allBlockers.length));
+    core.setOutput('verdict', decision.verdict);
+    core.setOutput('blockers-count', String(decision.blockers.length));
 
-    if (tribunal.hasBlockers) {
-      core.setOutput('verdict', 'CHANGES_REQUESTED');
-      core.setFailed(`Tribunal rejected PR: ${tribunal.allBlockers.length} blocking finding(s) detected.`);
+    // Publish review on GitHub PR if running in a pull request context
+    if (prPayload && prPayload.number && context.repo) {
+      core.info(`📝 Publishing review to PR #${prPayload.number}...`);
+      const octokit = github.getOctokit(token);
+      const commitSha = prPayload.head?.sha || headRef;
+
+      try {
+        const reviewId = await publishPullRequestReview({
+          octokit,
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pullNumber: prPayload.number,
+          commitSha,
+          decision,
+          seatResults: tribunal.seatResults,
+        });
+        core.info(`✅ Review published successfully (ID: ${reviewId}).`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        core.warning(`Failed to publish GitHub PR review comment: ${errMsg}`);
+      }
+    }
+
+    if (decision.verdict === 'REQUEST_CHANGES') {
+      core.setFailed(`Tribunal rejected PR: ${decision.blockers.length} blocking finding(s) detected.`);
     } else {
-      core.setOutput('verdict', 'APPROVED');
       core.info('🎉 Tribunal APPROVED pull request.');
     }
   } catch (error) {
