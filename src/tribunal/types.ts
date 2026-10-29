@@ -30,7 +30,13 @@ export interface PullRequestMetadata {
   diff: string;
 }
 
-export type LLMProvider = 'anthropic' | 'openai' | 'deepseek';
+export type LLMProvider = 'anthropic' | 'openai' | 'deepseek' | 'google';
+
+export interface SeatExecutionConfig {
+  provider: LLMProvider;
+  apiKey: string;
+  model: string;
+}
 
 export interface LLMRequestOptions {
   provider: LLMProvider;

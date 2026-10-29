@@ -15,6 +15,10 @@ export async function callLLM(
     return callAnthropic({ apiKey, model, systemPrompt, userPrompt, maxTokens, temperature }, fetchFn);
   }
 
+  if (provider === 'google') {
+    return callGemini({ apiKey, model, systemPrompt, userPrompt, maxTokens, temperature }, fetchFn);
+  }
+
   if (provider === 'openai' || provider === 'deepseek') {
     const baseUrl = provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com/v1';
     return callOpenAICompatible(
@@ -113,6 +117,58 @@ async function callOpenAICompatible(
   const data = (await response.json()) as any;
   const textContent = data.choices?.[0]?.message?.content || '';
   const tokensUsed = data.usage?.total_tokens;
+
+  return {
+    content: textContent,
+    tokensUsed,
+  };
+}
+
+async function callGemini(
+  params: {
+    apiKey: string;
+    model: string;
+    systemPrompt: string;
+    userPrompt: string;
+    maxTokens: number;
+    temperature: number;
+  },
+  fetchFn: typeof fetch
+): Promise<LLMResponse> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent`;
+
+  const response = await fetchFn(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-goog-api-key': params.apiKey,
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: params.systemPrompt }],
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: params.userPrompt }],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: params.maxTokens,
+        temperature: params.temperature,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Google Gemini API request failed with status ${response.status}: ${errorBody}`);
+  }
+
+  const data = (await response.json()) as any;
+  const textContent =
+    data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const tokensUsed = data.usageMetadata?.totalTokenCount;
 
   return {
     content: textContent,

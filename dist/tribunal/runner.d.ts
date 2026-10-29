@@ -1,9 +1,10 @@
-import type { PullRequestMetadata, LLMProvider, LLMClientFn, SeatReviewResult, Finding } from './types.js';
+import type { PullRequestMetadata, LLMProvider, LLMClientFn, SeatReviewResult, Finding, SeatId, SeatExecutionConfig } from './types.js';
 export interface TribunalOptions {
     pr: PullRequestMetadata;
-    provider: LLMProvider;
-    apiKey: string;
-    model: string;
+    provider?: LLMProvider;
+    apiKey?: string;
+    model?: string;
+    seatConfigs?: Partial<Record<SeatId, SeatExecutionConfig>>;
     llmClient?: LLMClientFn;
 }
 export interface TribunalSummary {

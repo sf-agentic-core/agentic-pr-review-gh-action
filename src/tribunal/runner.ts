@@ -5,15 +5,17 @@ import type {
   SeatReviewResult,
   Finding,
   SeatId,
+  SeatExecutionConfig,
 } from './types.js';
 import { buildSeatPrompt, parseSeatOutput } from './prompts.js';
 import { callLLM } from './adapter.js';
 
 export interface TribunalOptions {
   pr: PullRequestMetadata;
-  provider: LLMProvider;
-  apiKey: string;
-  model: string;
+  provider?: LLMProvider;
+  apiKey?: string;
+  model?: string;
+  seatConfigs?: Partial<Record<SeatId, SeatExecutionConfig>>;
   llmClient?: LLMClientFn;
 }
 
@@ -34,7 +36,7 @@ const SEATS: SeatId[] = ['seat-a', 'seat-b', 'seat-c'];
  * - Seat C: Cognitive Load & Radical Simplification
  */
 export async function runTribunal(options: TribunalOptions): Promise<TribunalSummary> {
-  const { pr, provider, apiKey, model, llmClient = callLLM } = options;
+  const { pr, provider, apiKey, model, seatConfigs = {}, llmClient = callLLM } = options;
 
   let totalTokensUsed = 0;
 
@@ -42,10 +44,22 @@ export async function runTribunal(options: TribunalOptions): Promise<TribunalSum
   const seatPromises = SEATS.map(async (seatId) => {
     const { systemPrompt, userPrompt } = buildSeatPrompt(seatId, pr);
 
+    // Resolve per-seat configuration with fallback to global options
+    const seatConfig = seatConfigs[seatId];
+    const resolvedProvider = seatConfig?.provider || provider;
+    const resolvedApiKey = seatConfig?.apiKey || apiKey;
+    const resolvedModel = seatConfig?.model || model;
+
+    if (!resolvedProvider || !resolvedApiKey || !resolvedModel) {
+      throw new Error(
+        `Missing LLM configuration for ${seatId}. Must provide either global provider/apiKey/model or seat-specific configuration.`
+      );
+    }
+
     const response = await llmClient({
-      provider,
-      apiKey,
-      model,
+      provider: resolvedProvider,
+      apiKey: resolvedApiKey,
+      model: resolvedModel,
       systemPrompt,
       userPrompt,
     });

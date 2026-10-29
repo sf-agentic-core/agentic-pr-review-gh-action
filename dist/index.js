@@ -30229,13 +30229,37 @@ async function run() {
             }
         }
         // Phase 2: Review Tribunal Execution
-        if (!apiKey) {
-            core.warning('⚠️ No api-key provided. Skipping Synthetic Review Tribunal.');
+        const seatConfigs = {};
+        const resolveSeatConfig = (seatId, prefix) => {
+            const sProvider = (core.getInput(`${prefix}-provider`) || provider);
+            const sKey = core.getInput(`${prefix}-api-key`) || apiKey;
+            const sModel = core.getInput(`${prefix}-model`) || model;
+            if (sKey && sModel && sProvider) {
+                return {
+                    provider: sProvider,
+                    apiKey: sKey,
+                    model: sModel,
+                };
+            }
+            return undefined;
+        };
+        const configA = resolveSeatConfig('seat-a', 'seat-a');
+        const configB = resolveSeatConfig('seat-b', 'seat-b');
+        const configC = resolveSeatConfig('seat-c', 'seat-c');
+        if (configA)
+            seatConfigs['seat-a'] = configA;
+        if (configB)
+            seatConfigs['seat-b'] = configB;
+        if (configC)
+            seatConfigs['seat-c'] = configC;
+        const hasAnyConfig = Boolean(apiKey || configA?.apiKey || configB?.apiKey || configC?.apiKey);
+        if (!hasAnyConfig) {
+            core.warning('⚠️ No api-key or per-seat API keys provided. Skipping Synthetic Review Tribunal.');
             core.setOutput('verdict', 'APPROVED');
             core.setOutput('blockers-count', '0');
             return;
         }
-        core.info(`🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
+        core.info(`🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (Seat A: ${configA?.provider || provider}/${configA?.model || model}, Seat B: ${configB?.provider || provider}/${configB?.model || model}, Seat C: ${configC?.provider || provider}/${configC?.model || model})...`);
         // Obtain diff
         const diff = await execGit(['diff', `${baseRef}...${headRef}`]);
         const pr = {
@@ -30251,6 +30275,7 @@ async function run() {
             provider,
             apiKey,
             model,
+            seatConfigs,
         });
         core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);
         // Phase 3: Asymmetric Quorum Tally & Review Publishing
@@ -31130,6 +31155,9 @@ async function callLLM(options, fetchFn = fetch) {
     if (provider === 'anthropic') {
         return callAnthropic({ apiKey, model, systemPrompt, userPrompt, maxTokens, temperature }, fetchFn);
     }
+    if (provider === 'google') {
+        return callGemini({ apiKey, model, systemPrompt, userPrompt, maxTokens, temperature }, fetchFn);
+    }
     if (provider === 'openai' || provider === 'deepseek') {
         const baseUrl = provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com/v1';
         return callOpenAICompatible({ baseUrl, apiKey, model, systemPrompt, userPrompt, maxTokens, temperature, providerName: provider }, fetchFn);
@@ -31191,6 +31219,42 @@ async function callOpenAICompatible(params, fetchFn) {
     const data = (await response.json());
     const textContent = data.choices?.[0]?.message?.content || '';
     const tokensUsed = data.usage?.total_tokens;
+    return {
+        content: textContent,
+        tokensUsed,
+    };
+}
+async function callGemini(params, fetchFn) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent`;
+    const response = await fetchFn(url, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': params.apiKey,
+        },
+        body: JSON.stringify({
+            systemInstruction: {
+                parts: [{ text: params.systemPrompt }],
+            },
+            contents: [
+                {
+                    role: 'user',
+                    parts: [{ text: params.userPrompt }],
+                },
+            ],
+            generationConfig: {
+                maxOutputTokens: params.maxTokens,
+                temperature: params.temperature,
+            },
+        }),
+    });
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Google Gemini API request failed with status ${response.status}: ${errorBody}`);
+    }
+    const data = (await response.json());
+    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const tokensUsed = data.usageMetadata?.totalTokenCount;
     return {
         content: textContent,
         tokensUsed,
@@ -31446,15 +31510,23 @@ const SEATS = ['seat-a', 'seat-b', 'seat-c'];
  * - Seat C: Cognitive Load & Radical Simplification
  */
 async function runTribunal(options) {
-    const { pr, provider, apiKey, model, llmClient = adapter_js_1.callLLM } = options;
+    const { pr, provider, apiKey, model, seatConfigs = {}, llmClient = adapter_js_1.callLLM } = options;
     let totalTokensUsed = 0;
     // Run all 3 seats concurrently
     const seatPromises = SEATS.map(async (seatId) => {
         const { systemPrompt, userPrompt } = (0, prompts_js_1.buildSeatPrompt)(seatId, pr);
+        // Resolve per-seat configuration with fallback to global options
+        const seatConfig = seatConfigs[seatId];
+        const resolvedProvider = seatConfig?.provider || provider;
+        const resolvedApiKey = seatConfig?.apiKey || apiKey;
+        const resolvedModel = seatConfig?.model || model;
+        if (!resolvedProvider || !resolvedApiKey || !resolvedModel) {
+            throw new Error(`Missing LLM configuration for ${seatId}. Must provide either global provider/apiKey/model or seat-specific configuration.`);
+        }
         const response = await llmClient({
-            provider,
-            apiKey,
-            model,
+            provider: resolvedProvider,
+            apiKey: resolvedApiKey,
+            model: resolvedModel,
             systemPrompt,
             userPrompt,
         });
