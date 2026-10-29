@@ -1,3 +1,4 @@
+import { jsonrepair } from 'jsonrepair';
 import type { SeatId, PullRequestMetadata, SeatReviewResult, Finding } from './types.js';
 
 interface PromptDefinition {
@@ -104,15 +105,67 @@ ${pr.diff}
   return { systemPrompt, userPrompt };
 }
 
+function repairUnescapedQuotesInStrings(json: string): string {
+  let inBacktick = false;
+  let escape = false;
+  let result = '';
+
+  for (let i = 0; i < json.length; i++) {
+    const c = json[i];
+    if (escape) {
+      result += c;
+      escape = false;
+      continue;
+    }
+    if (c === '\\') {
+      result += c;
+      escape = true;
+      continue;
+    }
+    if (c === '`') {
+      inBacktick = !inBacktick;
+      result += c;
+      continue;
+    }
+    if (c === '"' && inBacktick) {
+      result += '\\"';
+      continue;
+    }
+    result += c;
+  }
+  return result;
+}
+
+function extractJsonBlock(raw: string): string {
+  const firstFence = raw.indexOf('```');
+  if (firstFence === -1) return raw.trim();
+  const firstNewline = raw.indexOf('\n', firstFence);
+  const lastFence = raw.lastIndexOf('```');
+  if (lastFence > firstNewline) {
+    return raw.slice(firstNewline + 1, lastFence).trim();
+  }
+  return raw.trim();
+}
+
 export function parseSeatOutput(seatId: SeatId, rawResponse: string): SeatReviewResult {
   const def = SEAT_DEFINITIONS[seatId];
 
   try {
-    // Extract JSON block from markdown code fences if present
-    const jsonMatch = rawResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    const jsonStr = jsonMatch ? jsonMatch[1] : rawResponse.trim();
+    const extracted = extractJsonBlock(rawResponse);
+    const repairedQuotes = repairUnescapedQuotesInStrings(extracted);
 
-    const parsed = JSON.parse(jsonStr);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(repairedQuotes);
+    } catch {
+      // Fallback to jsonrepair for complex LLM quote/comma formatting slips
+      const repaired = jsonrepair(repairedQuotes);
+      parsed = JSON.parse(repaired);
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Model response did not yield a valid JSON object.');
+    }
 
     const findings: Finding[] = Array.isArray(parsed.findings)
       ? parsed.findings.map((f: any) => ({

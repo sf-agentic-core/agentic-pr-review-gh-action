@@ -1,0 +1,34 @@
+## 🏛️ Synthetic Review Tribunal Verdict: `REQUEST_CHANGES`
+
+> Asymmetric Quorum: 1 seat(s) raised blocking findings (1 unique blocker(s)). Changes requested.
+
+### 🗳️ Tribunal Seat Votes
+
+| Seat | Vote | Summary |
+| --- | --- | --- |
+| Seat A: Correctness, Algorithmic Integrity & Contracts | ❌ REQUEST_CHANGES | Failed to parse structured output from model. |
+| Seat B: Test Quality & Verification Boundaries | ✅ APPROVE | The test suite is substantive and well-structured: 33 cases exercise observable exit codes and output text, the renderer is tested against real file content rather than mocks, and the PR-title linter is extracted from the shipped template to prevent silent divergence. A few gaps exist around boundary conditions and mutation resistance that are worth addressing in follow-up. |
+| Seat C: Cognitive Load & Radical Simplification | ✅ APPROVE | The implementation is well-structured and appropriately sized for its purpose, with clear separation of concerns across validate.sh, render.py, port-run.sh, and the workflow. A few areas have minor complexity concerns but nothing rises to a blocker level. |
+
+### 🚫 Blocking Findings (1)
+
+- **Unparseable Tribunal Response** (`unknown`)
+  > The model response did not conform to the expected JSON schema: Unterminated string in JSON at position 963 (line 11 column 138)
+
+### ⚠️ Warnings & Suggestions (12)
+
+- [WARNING] **No test for description at exactly the 140-character boundary** (`scaffolder/validate_test.sh:148`): The description length limit is MAX_DESCRIPTION=140. The test suite rejects an empty description and accepts a normal one, but there is no case for a 140-character description (should pass) or a 141-character description (should fail). Off-by-one errors in the `(( ${#description} > MAX_DESCRIPTION ))` guard would go undetected.
+- [WARNING] **No test for purpose at exactly the 45-character boundary** (`scaffolder/validate_test.sh:148`): The purpose length boundary is tested with a 46-character string (rejected) but not with a 45-character string (should be accepted) or a 2-character string (minimum boundary). The off-by-one in `(( ${#purpose} > 45 ))` is not covered from the passing side.
+- [WARNING] **PR title rejection cases do not assert the error message text** (`scaffolder/validate_test.sh:196`): `pr_title_case` passes an empty string as the expected_text argument for all rejection cases. The `check` function skips the text assertion when expected_text is empty, so a case that exits 1 for the wrong reason (e.g., a bash syntax error) would still be reported as passing.
+- [WARNING] **No test verifies that removing the UUID_PATTERN check still fails** (`scaffolder/validate_test.sh:160`): The malformed LeanIX reference test (`REF_UUID=702ffe00`) only checks that a short string is rejected. There is no test for a string that looks UUID-like but has wrong segment lengths (e.g. `702ffe00-e3e4-438c-a870-5a2d0f74`), which would survive a weakened regex.
+- [WARNING] **Three separate Python heredocs where one curl invocation would suffice** (`scaffolder/port-run.sh:30`): port-run.sh spawns three separate Python processes via heredocs: one to get a token, one to build a JSON body, one to make the PATCH call. This is significantly more complex than two curl calls (one for the token, one for the PATCH). The script already has curl available (used in the workflow). Python's urllib is being used to avoid a dependency, but curl is already present and used elsewhere in the same workflow.
+- [WARNING] **Inline shell function `assert` inside a workflow step adds cognitive load** (`.github/workflows/scaffold-repository.yaml:155`): The `Verify the declaration` step defines an `assert` shell function inline within a 60+ line run block. This is the most complex single step in the workflow and is harder to test in isolation. The step also mixes assertion logic with summary formatting.
+- [SUGGESTION] **No test for a purpose that is only digits** (`scaffolder/validate_test.sh:100`): The PURPOSE_PATTERN `^[a-z0-9]+(-[a-z0-9]+)*$` allows all-digit purposes like `123`. It is unclear whether this is intentional; if not, there is no test to catch a regression if the pattern is tightened.
+- [SUGGESTION] **Renderer is not tested with special characters in TEAM_NAME or REPOSITORY_NAME** (`scaffolder/validate_test.sh:175`): The renderer test uses a description with `&`, `/` and quotes to verify escaping, but TEAM_NAME and REPOSITORY_NAME are plain ASCII. A team name containing a colon or a backslash could produce broken YAML in catalog-info.yaml without any test catching it.
+- [SUGGESTION] **Verify step asserts `required_checks` as a joined string, fragile to ordering** (`.github/workflows/scaffold-repository.yaml:253`): The `assert required_checks lint "$checks"` line joins all required status check contexts with commas and compares the result to the literal string `lint`. If the ruleset ever gains a second required check, the assertion will fail with a confusing message rather than a targeted one. More importantly, if the `lint` check is present but not first, `join(",")` still produces `lint` only when it is the sole entry, so the current single-check case passes trivially.
+- [SUGGESTION] **PR title step extraction via PyYAML adds a non-obvious dependency** (`scaffolder/validate_test.sh:130`): The test extracts the PR title lint script from the YAML template using PyYAML, which requires PyYAML to be installed. The guard is present but the approach is fragile — if the YAML structure changes, the extraction silently returns empty. A simpler approach would be to keep the PR title validation logic in a standalone script that both the template and the test reference.
+- [SUGGESTION] **`in_list` iterates a space-separated string with `$*` unquoted** (`scaffolder/validate.sh:47`): The `in_list` function uses `for item in $*` (unquoted), which works but is a shellcheck warning and non-idiomatic. The function is only called twice with a small static list, so a simple `case` statement would be clearer and avoid the subtle quoting issue.
+- [SUGGESTION] **Render step re-declares all env vars already available in the job environment** (`.github/workflows/scaffold-repository.yaml:170`): The `Render the baseline files` step explicitly re-exports `ORG`, `REPOSITORY_NAME`, `TEAM_SLUG`, `TEAM_NAME`, `DESCRIPTION`, `LIFECYCLE`, and `REF_UUID` as step-level env vars, even though most of these are already accessible via `inputs.*` or `env.*` at the job level. This duplication adds noise.
+
+---
+*Generated deterministically by [Agentic PR Review Tribunal](https://github.com/sf-agentic-core/agentic-pr-review-gh-action)*
