@@ -1,0 +1,44 @@
+name: 'Agentic PR Review Tribunal'
+description: 'Sovereign GitHub Action for agentic code governance, synthetic review tribunals, and automated PR verification'
+author: 'Saul Fernandez & Tachikoma Core'
+
+inputs:
+  github-token:
+    description: 'GitHub Token for posting review comments and reading PR data'
+    required: true
+    default: ${{ github.token }}
+  provider:
+    description: 'AI model provider: anthropic, deepseek, or openai'
+    required: false
+    default: 'anthropic'
+  api-key:
+    description: 'API key for the chosen AI model provider'
+    required: true
+  model:
+    description: 'Exact model identifier to use for the tribunal seats'
+    required: false
+    default: 'claude-3-5-sonnet-latest'
+  max-corrections:
+    description: 'Maximum number of automated correction loops before human intervention is required'
+    required: false
+    default: '3'
+  check-overlap:
+    description: 'Whether to verify that main has not drifted on touched files since branch creation'
+    required: false
+    default: 'true'
+  strict-invariants:
+    description: 'Enforce that linting, build, and tests must be green before tribunal approves'
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: 'Final tribunal verdict: APPROVED, CHANGES_REQUESTED, or BLOCKED'
+  blockers-count:
+    description: 'Total number of blocking findings detected'
+  overlap-detected:
+    description: 'Whether a merge collision overlap was detected with origin/main'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
