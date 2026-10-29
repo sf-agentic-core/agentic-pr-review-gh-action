@@ -26,6 +26,10 @@ inputs:
     description: 'Automatically merge the PR if tribunal unanimously/majority approves and invariants are green'
     required: false
     default: 'false'
+  artifact-dir:
+    description: 'Local directory where review.md and verdict.json are persisted'
+    required: false
+    default: '.tribunal'
   merge-method:
     description: 'Merge method to use for auto-merge: squash, merge, or rebase'
     required: false
@@ -50,6 +54,8 @@ outputs:
     description: 'Whether the automated correction iteration budget was exhausted'
   merged:
     description: 'Whether the pull request was automatically merged by the gate'
+  ready-to-merge:
+    description: 'Whether the pull request passed all invariants and tribunal review with 0 blockers'
 
 runs:
   using: 'node20'
