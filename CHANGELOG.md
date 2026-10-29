@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/compare/v1.1.0...v1.2.0) (2026-10-29)
+
+
+### Features
+
+* **invariants:** add shell syntax pre-flight and calibrate tribunal precision ([#18](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/issues/18)) ([d7e6fae](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/commit/d7e6fae955eeb0ca1ca2ef308f01ba23b44ba8b9))
+* **tribunal:** heterogeneous multi-provider seats (Gemini, OpenAI, DeepSeek, Anthropic) ([#20](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/issues/20)) ([42173b9](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/commit/42173b902ec4b758af7497eed57d410bcd405cb9))
+
+
+### Bug Fixes
+
+* **prompts:** support robust JSON extraction and quote repair from model output ([e433bd9](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/commit/e433bd9fab2b8da087596aae137599f095bc753d))
+
 ## [1.1.0](https://github.com/sf-agentic-core/agentic-pr-review-gh-action/compare/v1.0.0...v1.1.0) (2026-10-29)
 
 
