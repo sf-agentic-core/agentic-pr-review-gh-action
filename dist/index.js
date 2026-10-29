@@ -29922,6 +29922,158 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 580:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.countCorrectionRounds = countCorrectionRounds;
+exports.checkBudgetStatus = checkBudgetStatus;
+const TRIBUNAL_HEADER = '## 🏛️ Synthetic Review Tribunal Verdict:';
+/**
+ * Counts how many prior tribunal review rounds have occurred on this PR
+ * based on tamper-evident GitHub PR review history.
+ */
+function countCorrectionRounds(reviews) {
+    let count = 0;
+    for (const r of reviews) {
+        if (r.body && r.body.includes(TRIBUNAL_HEADER)) {
+            count++;
+        }
+    }
+    return count;
+}
+/**
+ * Checks if the automated correction loop budget has reached or exceeded its limit.
+ */
+function checkBudgetStatus(options) {
+    const { currentCorrections, maxCorrections } = options;
+    const isExhausted = currentCorrections >= maxCorrections;
+    const remaining = Math.max(0, maxCorrections - currentCorrections);
+    return {
+        isExhausted,
+        currentCorrections,
+        maxCorrections,
+        remaining,
+        reason: isExhausted
+            ? `Correction budget exhausted (${currentCorrections}/${maxCorrections} rounds used). Autonomous hallucination guard engaged.`
+            : undefined,
+    };
+}
+
+
+/***/ }),
+
+/***/ 4080:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.escalateToHuman = escalateToHuman;
+/**
+ * Flags the PR for human intervention when the automated correction budget has been exhausted.
+ * Applies the `needs-human-intervention` label and posts an explanatory comment.
+ */
+async function escalateToHuman(options) {
+    const { octokit, owner, repo, pullNumber, roundsUsed, maxRounds, lastBlockersCount } = options;
+    // 1. Add label
+    await octokit.rest.issues.addLabels({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        labels: ['needs-human-intervention'],
+    });
+    // 2. Post explanatory comment
+    const comment = `## 🚨 Tribunal Correction Budget Exhausted (${roundsUsed}/${maxRounds} rounds)
+
+This pull request has exhausted the allowed automated correction iterations.
+- **Unresolved Blocking Findings:** ${lastBlockersCount}
+- **Status:** Autonomous retry loops have been halted to prevent model hallucination or churn.
+- **Action Required:** A human engineer must inspect the remaining findings and manually steer or merge this change.
+
+---
+*Escalated automatically by [Agentic PR Review Tribunal](https://github.com/sf-agentic-core/agentic-pr-review-gh-action)*`;
+    await octokit.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: pullNumber,
+        body: comment,
+    });
+}
+
+
+/***/ }),
+
+/***/ 6762:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.evaluateMergeGate = evaluateMergeGate;
+/**
+ * Deterministic Merge Gate.
+ * Validates that all invariants are satisfied before executing auto-merge:
+ * 1. Pre-flight invariants must be 100% green (no secret leaks, no overlap drift, clean surfaces).
+ * 2. Tribunal Quorum verdict must be strictly APPROVE with 0 blocking findings.
+ * 3. Auto-merge must be explicitly enabled by user/workflow configuration.
+ */
+async function evaluateMergeGate(options) {
+    const { octokit, owner, repo, pullNumber, autoMergeRequested, preflight, decision, mergeMethod = 'squash', } = options;
+    // 1. Invariants check
+    if (!preflight.success) {
+        return {
+            authorized: false,
+            merged: false,
+            reason: `Pre-flight invariants failed: ${preflight.reasons.join('; ')}`,
+        };
+    }
+    // 2. Tribunal decision check
+    if (decision.verdict !== 'APPROVE' || decision.blockers.length > 0) {
+        return {
+            authorized: false,
+            merged: false,
+            reason: `Tribunal verdict is ${decision.verdict} with ${decision.blockers.length} blocking finding(s).`,
+        };
+    }
+    // 3. User opt-in check
+    if (!autoMergeRequested) {
+        return {
+            authorized: true,
+            merged: false,
+            reason: 'PR approved by tribunal, but auto-merge not requested. Ready for manual merge.',
+        };
+    }
+    // 4. Execute merge
+    try {
+        const response = await octokit.rest.pulls.merge({
+            owner,
+            repo,
+            pull_number: pullNumber,
+            merge_method: mergeMethod,
+        });
+        return {
+            authorized: true,
+            merged: response.data.merged,
+            commitSha: response.data.sha,
+            reason: 'PR successfully merged by Agentic Review Tribunal auto-merge gate.',
+        };
+    }
+    catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        return {
+            authorized: true,
+            merged: false,
+            reason: `Auto-merge execution failed via GitHub API: ${errMsg}`,
+        };
+    }
+}
+
+
+/***/ }),
+
 /***/ 9407:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -29969,6 +30121,9 @@ const index_js_1 = __nccwpck_require__(5749);
 const runner_js_1 = __nccwpck_require__(7461);
 const tally_js_1 = __nccwpck_require__(9772);
 const publisher_js_1 = __nccwpck_require__(3918);
+const budget_js_1 = __nccwpck_require__(580);
+const escalation_js_1 = __nccwpck_require__(4080);
+const gate_js_1 = __nccwpck_require__(6762);
 async function run() {
     try {
         const token = core.getInput('github-token', { required: true });
@@ -29976,9 +30131,15 @@ async function run() {
         const headRef = core.getInput('head-ref') || 'HEAD';
         const checkOverlap = core.getBooleanInput('check-overlap');
         const strictInvariants = core.getBooleanInput('strict-invariants');
+        const autoMergeRequested = core.getBooleanInput('auto-merge');
+        const mergeMethod = (core.getInput('merge-method') || 'squash');
+        const maxCorrections = parseInt(core.getInput('max-corrections') || '3', 10);
         const provider = (core.getInput('provider') || 'anthropic');
         const apiKey = core.getInput('api-key');
         const model = core.getInput('model') || 'claude-3-5-sonnet-latest';
+        const context = github.context;
+        const prPayload = context.payload.pull_request;
+        const octokit = github.getOctokit(token);
         core.info('🔎 Phase 0: Running Invariant Pre-flight Checks...');
         const execGit = async (args) => {
             let output = '';
@@ -30029,18 +30190,53 @@ async function run() {
             return;
         }
         core.info('✅ Invariant Pre-flight passed cleanly.');
-        // Phase 1: Review Tribunal Execution
+        // Phase 1: Budget and Iteration Guard
+        if (prPayload && prPayload.number && context.repo) {
+            core.info('⏱️ Phase 1: Checking Tamper-Evident Correction Budget...');
+            try {
+                const { data: reviews } = await octokit.rest.pulls.listReviews({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: prPayload.number,
+                });
+                const currentRounds = (0, budget_js_1.countCorrectionRounds)(reviews);
+                const budget = (0, budget_js_1.checkBudgetStatus)({
+                    currentCorrections: currentRounds,
+                    maxCorrections,
+                });
+                core.info(`- Correction rounds used: ${currentRounds}/${maxCorrections}`);
+                if (budget.isExhausted) {
+                    core.warning(`⚠️ ${budget.reason}`);
+                    core.setOutput('budget-exhausted', 'true');
+                    core.setOutput('verdict', 'BLOCKED');
+                    await (0, escalation_js_1.escalateToHuman)({
+                        octokit,
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        pullNumber: prPayload.number,
+                        roundsUsed: currentRounds,
+                        maxRounds: maxCorrections,
+                        lastBlockersCount: 1,
+                    });
+                    core.setFailed(budget.reason || 'Correction budget exhausted.');
+                    return;
+                }
+                core.setOutput('budget-exhausted', 'false');
+            }
+            catch (err) {
+                core.warning(`Could not inspect review history for budget check: ${String(err)}`);
+            }
+        }
+        // Phase 2: Review Tribunal Execution
         if (!apiKey) {
             core.warning('⚠️ No api-key provided. Skipping Synthetic Review Tribunal.');
             core.setOutput('verdict', 'APPROVED');
             core.setOutput('blockers-count', '0');
             return;
         }
-        core.info(`🏛️ Phase 1: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
+        core.info(`🏛️ Phase 2: Invoking Three-Seat Synthetic Review Tribunal (${provider} / ${model})...`);
         // Obtain diff
         const diff = await execGit(['diff', `${baseRef}...${headRef}`]);
-        const context = github.context;
-        const prPayload = context.payload.pull_request;
         const pr = {
             title: prPayload?.title || 'Local / Non-PR Invocation',
             description: prPayload?.body || '',
@@ -30056,8 +30252,8 @@ async function run() {
             model,
         });
         core.info(`⚖️ Tribunal completed. Tokens used: ${tribunal.totalTokensUsed}`);
-        // Phase 2: Asymmetric Quorum Tally & Review Publishing
-        core.info('📊 Phase 2: Computing Asymmetric Quorum Decision...');
+        // Phase 3: Asymmetric Quorum Tally & Review Publishing
+        core.info('📊 Phase 3: Computing Asymmetric Quorum Decision...');
         const decision = (0, tally_js_1.calculateQuorum)(tribunal.seatResults);
         for (const seat of tribunal.seatResults) {
             core.info(`- ${seat.seatName}: ${seat.vote} (${seat.findings.length} findings)`);
@@ -30067,7 +30263,6 @@ async function run() {
         // Publish review on GitHub PR if running in a pull request context
         if (prPayload && prPayload.number && context.repo) {
             core.info(`📝 Publishing review to PR #${prPayload.number}...`);
-            const octokit = github.getOctokit(token);
             const commitSha = prPayload.head?.sha || headRef;
             try {
                 const reviewId = await (0, publisher_js_1.publishPullRequestReview)({
@@ -30085,6 +30280,20 @@ async function run() {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 core.warning(`Failed to publish GitHub PR review comment: ${errMsg}`);
             }
+            // Phase 4: Auto-merge Gate Evaluation
+            core.info('🚪 Phase 4: Evaluating Auto-merge Gate...');
+            const mergeResult = await (0, gate_js_1.evaluateMergeGate)({
+                octokit,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber: prPayload.number,
+                autoMergeRequested,
+                preflight,
+                decision,
+                mergeMethod,
+            });
+            core.setOutput('merged', mergeResult.merged ? 'true' : 'false');
+            core.info(`- Auto-merge result: ${mergeResult.reason}`);
         }
         if (decision.verdict === 'REQUEST_CHANGES') {
             core.setFailed(`Tribunal rejected PR: ${decision.blockers.length} blocking finding(s) detected.`);
