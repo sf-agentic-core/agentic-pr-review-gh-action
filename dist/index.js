@@ -30131,6 +30131,7 @@ async function run() {
         const baseRef = core.getInput('base-ref') || 'origin/main';
         const headRef = core.getInput('head-ref') || 'HEAD';
         const checkOverlap = core.getBooleanInput('check-overlap');
+        const checkSurfaces = core.getBooleanInput('check-surfaces');
         const strictInvariants = core.getBooleanInput('strict-invariants');
         const autoMergeRequested = core.getBooleanInput('auto-merge');
         const mergeMethod = (core.getInput('merge-method') || 'squash');
@@ -30179,6 +30180,7 @@ async function run() {
             checkOverlap,
             checkSecrets: strictInvariants,
             failOnScannerMissing: false,
+            protectedPatterns: checkSurfaces ? undefined : [],
         });
         if (preflight.overlapResult?.hasOverlap) {
             core.setOutput('overlap-detected', 'true');
