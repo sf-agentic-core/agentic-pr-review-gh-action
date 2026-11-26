@@ -5,16 +5,19 @@ export interface QuorumDecision {
   approveVotes: number;
   requestChangesVotes: number;
   totalSeats: number;
-  blockers: Finding[];
-  warnings: Finding[];
-  suggestions: Finding[];
+  blockers: Finding[]; // Important / Blocker findings
+  warnings: Finding[]; // Major / Warning findings
+  suggestions: Finding[]; // Minor / Suggestion findings
+  important?: Finding[]; // Optional alias for 3-tier ergonomics
+  major?: Finding[]; // Optional alias for 3-tier ergonomics
+  minor?: Finding[]; // Optional alias for 3-tier ergonomics
   summary: string;
 }
 
 /**
  * Calculates the final tribunal decision based on the Principle of Asymmetric Quorum:
- * - APPROVE requires at least 2 approving seats AND 0 blocking findings.
- * - REQUEST_CHANGES triggers if even a SINGLE seat raises 1 or more blocking findings.
+ * - APPROVE requires at least 2 approving seats AND 0 blocking/important findings.
+ * - REQUEST_CHANGES triggers if even a SINGLE seat raises 1 or more blocking/important findings.
  */
 export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision {
   const totalSeats = seatResults.length;
@@ -33,9 +36,9 @@ export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision
     }
 
     for (const finding of seat.findings) {
-      if (finding.severity === 'BLOCKER') {
+      if (finding.severity === 'IMPORTANT' || finding.severity === 'BLOCKER') {
         rawBlockers.push(finding);
-      } else if (finding.severity === 'WARNING') {
+      } else if (finding.severity === 'MAJOR' || finding.severity === 'WARNING') {
         rawWarnings.push(finding);
       } else {
         rawSuggestions.push(finding);
@@ -74,6 +77,9 @@ export function calculateQuorum(seatResults: SeatReviewResult[]): QuorumDecision
     blockers,
     warnings,
     suggestions,
+    important: blockers,
+    major: warnings,
+    minor: suggestions,
     summary,
   };
 }

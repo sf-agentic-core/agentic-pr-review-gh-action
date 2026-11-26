@@ -224,7 +224,7 @@ export async function run(): Promise<void> {
       const commitSha = prPayload.head?.sha || headRef;
 
       try {
-        const reviewId = await publishPullRequestReview({
+        const publishResult = await publishPullRequestReview({
           octokit,
           owner: context.repo.owner,
           repo: context.repo.repo,
@@ -233,7 +233,13 @@ export async function run(): Promise<void> {
           decision,
           seatResults: tribunal.seatResults,
         });
-        core.info(`✅ Review published successfully (ID: ${reviewId}).`);
+        core.info(`✅ Review published successfully (Review ID: ${publishResult.reviewId}).`);
+        if (publishResult.majorCommentId) {
+          core.info(`- Consolidated Major suggestions comment posted (ID: ${publishResult.majorCommentId}).`);
+        }
+        if (publishResult.minorCommentId) {
+          core.info(`- Consolidated Minor suggestions comment posted (ID: ${publishResult.minorCommentId}).`);
+        }
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         core.warning(`Failed to publish GitHub PR review comment: ${errMsg}`);
