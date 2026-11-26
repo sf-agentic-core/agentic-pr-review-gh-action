@@ -71,6 +71,10 @@ inputs:
     description: 'Whether to verify that main has not drifted on touched files since branch creation'
     required: false
     default: 'true'
+  check-surfaces:
+    description: 'Whether to enforce protected edit surfaces (e.g. .github/workflows, lockfiles)'
+    required: false
+    default: 'true'
   strict-invariants:
     description: 'Enforce that linting, build, and tests must be green before tribunal approves'
     required: false

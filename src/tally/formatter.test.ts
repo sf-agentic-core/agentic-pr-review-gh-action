@@ -54,12 +54,13 @@ describe('formatReviewBody', () => {
 
     expect(markdown).toContain('## 🏛️ Synthetic Review Tribunal Verdict: `REQUEST_CHANGES`');
     expect(markdown).toContain('| Seat | Vote | Summary |');
-    expect(markdown).toContain('| Seat A: Correctness & Logic | ❌ REQUEST_CHANGES | Race condition detected on line 12 |');
-    expect(markdown).toContain('| Seat B: Test Quality | ✅ APPROVE | Tests are sufficient |');
-    expect(markdown).toContain('### 🚫 Blocking Findings (1)');
+    expect(markdown).toContain('| Seat A: Correctness & Logic | ❌ **REQUEST_CHANGES** | Race condition detected on line 12 |');
+    expect(markdown).toContain('| Seat B: Test Quality | ✅ **APPROVE** | Tests are sufficient |');
+    expect(markdown).toContain('### 🚨 Important Findings (1)');
     expect(markdown).toContain('**Missing Mutex release** (`src/lock.ts:12`)');
     expect(markdown).toContain('> Lock stays acquired if error is thrown.');
-    expect(markdown).toContain('**Suggestion:** Wrap in try...finally block');
+    expect(markdown).toContain('**Suggested Fix:** Wrap in try...finally block');
+    expect(markdown).toContain('Review Ergonomics Summary');
   });
 });
 
@@ -85,10 +86,11 @@ describe('mapFindingsToInlineComments', () => {
 
     const inlineComments = mapFindingsToInlineComments(findings);
 
-    // Only findings with a line number become inline comments
+    // Only Important findings with a line number become inline comments
     expect(inlineComments).toHaveLength(1);
     expect(inlineComments[0].path).toBe('src/index.ts');
     expect(inlineComments[0].line).toBe(10);
-    expect(inlineComments[0].body).toContain('🚨 **[BLOCKER] Null dereference**');
+    expect(inlineComments[0].body).toContain('**Important — must be fixed before approval**');
+    expect(inlineComments[0].body).toContain('Value can be null');
   });
 });

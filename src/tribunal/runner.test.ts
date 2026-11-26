@@ -98,7 +98,7 @@ describe('runTribunal', () => {
     expect(tribunalResult.hasBlockers).toBe(true);
     expect(tribunalResult.allBlockers).toHaveLength(1);
     expect(tribunalResult.allBlockers[0].file).toBe('src/lock.ts');
-    expect(tribunalResult.allBlockers[0].severity).toBe('BLOCKER');
+    expect(['IMPORTANT', 'BLOCKER']).toContain(tribunalResult.allBlockers[0].severity);
     expect(tribunalResult.seatResults.find((s) => s.seatId === 'seat-a')?.vote).toBe(
       'REQUEST_CHANGES'
     );

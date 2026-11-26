@@ -72,7 +72,7 @@ describe('parseSeatOutput', () => {
     expect(result.vote).toBe('REQUEST_CHANGES');
     expect(result.summary).toBe('Hardcoded secret token found');
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].severity).toBe('BLOCKER');
+    expect(['IMPORTANT', 'BLOCKER']).toContain(result.findings[0].severity);
     expect(result.findings[0].file).toBe('src/auth.ts');
   });
 
@@ -83,7 +83,7 @@ describe('parseSeatOutput', () => {
     expect(result.seatId).toBe('seat-b');
     expect(result.vote).toBe('REQUEST_CHANGES');
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].severity).toBe('BLOCKER');
+    expect(['IMPORTANT', 'BLOCKER']).toContain(result.findings[0].severity);
     expect(result.findings[0].title).toBe('Unparseable Tribunal Response');
   });
 });

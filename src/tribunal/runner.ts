@@ -74,7 +74,9 @@ export async function runTribunal(options: TribunalOptions): Promise<TribunalSum
   const seatResults = await Promise.all(seatPromises);
 
   const allFindings = seatResults.flatMap((r) => r.findings);
-  const allBlockers = allFindings.filter((f) => f.severity === 'BLOCKER');
+  const allBlockers = allFindings.filter(
+    (f) => f.severity === 'IMPORTANT' || f.severity === 'BLOCKER'
+  );
 
   return {
     seatResults,
